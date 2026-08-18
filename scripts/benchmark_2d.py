@@ -151,11 +151,12 @@ def main():
                 )
             print(f"{label}: e2e p50 {phases['e2e']['ms_p50']:.2f} ms, "
                   f"decode peak {phases['decode']['peak_mem_bytes'] / 2**30:.2f} GiB", flush=True)
-        except torch.OutOfMemoryError:
+        except RuntimeError as e:  # OOM, 32-bit-index limits of eager kernels, ...
             torch.cuda.empty_cache()
+            err = "OOM" if isinstance(e, torch.OutOfMemoryError) else str(e).splitlines()[-1][:120]
             results.append({"checkpoint": args.model, "phase": "all", "H": h, "W": w,
-                            "batch": batch, "dtype": dtype_name, "error": "OOM"})
-            print(f"{label}: OOM", flush=True)
+                            "batch": batch, "dtype": dtype_name, "error": err})
+            print(f"{label}: ERROR {err}", flush=True)
         torch.cuda.empty_cache()
 
     out_path = Path(args.out) if args.out else Path("outputs/bench") / (
