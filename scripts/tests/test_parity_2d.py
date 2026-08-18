@@ -4,9 +4,9 @@ Runs the baseline (reference) and candidate implementations in the same
 process, over synthetic and real inputs, and checks the declared parity tier:
 
   T0: bitwise — torch.equal on latent and reconstruction, every input.
-  T1: fp32 max_abs <= 1e-5; bf16 max_abs <= 5e-2 and MAE <= 1e-3.
-      (The additional T2 metric gate required for bf16 T1 acceptance is not
-      implemented yet — implement before accepting the first T1 candidate.)
+  T1: fp32 max_abs <= 1e-5; bf16 max_abs <= 5e-2 and MAE <= 1e-3, plus the T2
+      metric gate on the real images: |dPSNR| <= 0.05 dB and |dLPIPS| <= 0.001
+      (means), per-image worst case dPSNR >= -0.2 dB.
 
 Not a pytest module — run directly on the remote machine from the repo root:
 
@@ -34,6 +34,7 @@ MODEL_PATHS = {
 SYNTH_SIZES = [(256, 256, 1), (512, 512, 1), (1024, 1024, 1), (768, 1344, 1), (512, 512, 4)]
 DTYPES = {"bf16": torch.bfloat16, "fp32": torch.float32}
 T1_GATES = {"fp32": {"max_abs": 1e-5}, "bf16": {"max_abs": 5e-2, "mae": 1e-3}}
+METRIC_GATES = {"d_psnr_mean": 0.05, "d_lpips_mean": 1e-3, "d_psnr_worst": -0.2}
 BORDER_PX = 16
 
 
@@ -103,8 +104,20 @@ def main():
     for dtype_name in args.dtypes.split(","):
         dtype = DTYPES[dtype_name]
         vae.to(dtype)
-        inputs = list(synth_inputs()) + list(real_inputs(args.data_dir))
-        for name, x in inputs:
+        inputs = [(n, x, False) for n, x in synth_inputs()] + [
+            (n, x, True) for n, x in real_inputs(args.data_dir)
+        ]
+
+        # The T2 metric gate is part of T1 acceptance in bf16 (testing spec).
+        need_metrics = args.tier == "T1" and dtype_name == "bf16"
+        if need_metrics:
+            from torchmetrics.functional.image import peak_signal_noise_ratio
+            from torchmetrics.image import LearnedPerceptualImagePatchSimilarity
+
+            lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type="alex").to(device)
+            metric_rows = []
+
+        for name, x, is_real in inputs:
             x = x.to(device=device, dtype=dtype)
             apply_candidate("baseline")
             lat_b, rec_b = run_pass(vae, x)
@@ -127,7 +140,35 @@ def main():
                 f"{name:<28}{dtype_name:>6}{str(bitwise):>9}{lat_max:>11.3e}{rec_max:>11.3e}"
                 f"{mae:>11.3e}{border:>11.3e}{interior:>11.3e}  {'PASS' if ok else 'FAIL'}"
             )
+
+            if need_metrics and is_real:
+                xf = x.float()
+                rb, rc = rec_b.float().clip(-1, 1), rec_c.float().clip(-1, 1)
+                metric_rows.append((
+                    name,
+                    peak_signal_noise_ratio(rb, xf, data_range=(-1.0, 1.0)).item(),
+                    peak_signal_noise_ratio(rc, xf, data_range=(-1.0, 1.0)).item(),
+                    lpips_metric(rb, xf).item(),
+                    lpips_metric(rc, xf).item(),
+                ))
             del lat_b, rec_b, lat_c, rec_c, dlat, drec
+
+        if need_metrics:
+            d_psnr = [c - b for _, b, c, _, _ in metric_rows]
+            d_lpips_mean = sum(c - b for _, _, _, b, c in metric_rows) / len(metric_rows)
+            d_psnr_mean = sum(d_psnr) / len(d_psnr)
+            print(f"metric gate (bf16, {len(metric_rows)} real images):")
+            for (name, pb, pc, lb, lc), dp in zip(metric_rows, d_psnr):
+                print(f"  {name:<26} PSNR {pb:7.3f} -> {pc:7.3f} ({dp:+.3f} dB)"
+                      f"   LPIPS {lb:.4f} -> {lc:.4f} ({lc - lb:+.5f})")
+            metrics_ok = (
+                abs(d_psnr_mean) <= METRIC_GATES["d_psnr_mean"]
+                and abs(d_lpips_mean) <= METRIC_GATES["d_lpips_mean"]
+                and min(d_psnr) >= METRIC_GATES["d_psnr_worst"]
+            )
+            n_fail += 0 if metrics_ok else 1
+            print(f"  mean dPSNR {d_psnr_mean:+.4f} dB, mean dLPIPS {d_lpips_mean:+.6f}, "
+                  f"worst dPSNR {min(d_psnr):+.4f} dB  {'PASS' if metrics_ok else 'FAIL'}")
 
     print("-" * len(header))
     print(f"{'ALL PASS' if n_fail == 0 else f'{n_fail} FAILURES'} (tier {args.tier})")

@@ -14,7 +14,7 @@ each measured/compared pass.
 import torch
 import torch.nn.functional as F
 
-from kvae.layers.sampling import PXSUpsample
+from kvae.layers.sampling import PXSDownsample, PXSUpsample
 
 
 def _pxs_upsample_forward_reference(self, x: torch.Tensor) -> torch.Tensor:
@@ -33,9 +33,32 @@ def _pxs_upsample_forward_reference(self, x: torch.Tensor) -> torch.Tensor:
     return self.linear(out)
 
 
+def _pxs_downsample_forward_reference(self, x: torch.Tensor) -> torch.Tensor:
+    """PXSDownsample.forward as of the pinned baseline commit.
+
+    (`self.unshuffle` was an `nn.PixelUnshuffle(self.factor)`.)
+    """
+    pxs_interm = F.pixel_unshuffle(x, self.factor)
+
+    b, c, h, w = pxs_interm.shape
+    pxs_interm_view = pxs_interm.view(b, c // self.factor**2, self.factor**2, h, w)
+    pxs_out = torch.mean(pxs_interm_view, dim=2)
+
+    conv_out = self.spatial_conv(x)
+
+    out = conv_out + pxs_out
+    return self.linear(out)
+
+
 # Captured at import time: whatever the library currently ships.
-_OPTIMIZED_FORWARDS = {PXSUpsample: PXSUpsample.forward}
-_REFERENCE_FORWARDS = {PXSUpsample: _pxs_upsample_forward_reference}
+_OPTIMIZED_FORWARDS = {
+    PXSUpsample: PXSUpsample.forward,
+    PXSDownsample: PXSDownsample.forward,
+}
+_REFERENCE_FORWARDS = {
+    PXSUpsample: _pxs_upsample_forward_reference,
+    PXSDownsample: _pxs_downsample_forward_reference,
+}
 
 # "baseline" = reference implementations; every other name is an optimized
 # candidate (currently they all map to the library code — candidates that need
