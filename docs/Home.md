@@ -20,6 +20,7 @@ This vault documents the **image (2D) part** of the KVAE repository — the `KVA
 3. **The analysis** — the deliverable
    - [[Technique Applicability]] — every video-VAE technique, with a verdict for the 2D model
    - [[Speed-Up Testing Specification]] — parity tiers, benchmark protocol, and acceptance gates for every optimization
+   - [[Optimization Results]] — running log of landed optimizations and their measured effect
 1. **The techniques** — details per technique, adapted to 2D
    - [[torch.compile Tuning (2D)]] · [[Channels-Last Memory Format (2D)]] · [[PXS Simplifications]]
    - [[Spatial Tiling (2D)]] · [[Normalization and Exact Tiling]] · [[Padding Modes]]

@@ -5,7 +5,11 @@ aliases: [sampling block rewrites, free wins]
 
 # PXS Simplifications
 
-**Verdict: new finding, applies as-is, numerically exact.** Two algebraic identities in the
+**Verdict: new finding, applies as-is, numerically exact.**
+*Status: the upsample rewrite (§1) is landed and validated — bitwise parity, decode peak
+−24…−27%; see [[Optimization Results]]. The downsample rewrite (§2) is the T1 candidate.*
+
+Two algebraic identities in the
 [[PXS Sampling Blocks]] let both residual paths be computed without their 4C-channel
 temporaries. Verified numerically against PyTorch's PixelShuffle/PixelUnshuffle semantics
 (bit-exact for the upsample identity; the downsample identity is exact up to float summation
