@@ -55,7 +55,7 @@ def git_meta():
     def run(*a):
         return subprocess.run(a, capture_output=True, text=True).stdout.strip()
 
-    return run("git", "rev-parse", "HEAD"), run("git", "status", "--porcelain") != ""
+    return run("git", "rev-parse", "HEAD"), run("git", "status", "--porcelain", "-uno") != ""
 
 
 def bench_phase(fn, arg, warmup: int, iters: int):
