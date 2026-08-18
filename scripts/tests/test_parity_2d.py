@@ -109,6 +109,13 @@ def main():
     n_fail = 0
     for dtype_name in args.dtypes.split(","):
         dtype = DTYPES[dtype_name]
+        # TF32 tensor-core kernels are on by default for fp32 convs/matmuls and
+        # differ by kernel selection (e.g. NCHW vs NHWC) — that is precision
+        # noise, not an algorithmic difference. Disable during the fp32 pass so
+        # it isolates real bugs; bf16 is unaffected by the flag.
+        tf32 = dtype_name != "fp32"
+        torch.backends.cudnn.allow_tf32 = tf32
+        torch.backends.cuda.matmul.allow_tf32 = tf32
         vae.to(dtype)
         inputs = [(n, x, False) for n, x in synth_inputs()] + [
             (n, x, True) for n, x in real_inputs(args.data_dir)
