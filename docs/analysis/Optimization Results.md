@@ -50,6 +50,39 @@ Key cells, KVAE-2D-2.0 (KVAE-2D-1.0 within noise of the same numbers):
   peak temporary): **PASSED** on both checkpoints (−24.5% ≫ 3% bar, no time cell regressing
   beyond 2%).
 
+## T1 — PXSDownsample avg-pool residual (landed 2026-08-18, gate NOT cleared)
+
+**Change** (`kvae/layers/sampling.py`, commit `0048b55`): `PXSDownsample.forward` computes the
+residual as `F.avg_pool2d(x, 2)` instead of unshuffle → view → mean — see
+[[PXS Simplifications]]. Declared tier: **T1**; also implemented the T2 metric gate
+(PSNR/LPIPS deltas on real images) in the parity harness as required for bf16 T1 acceptance.
+
+### Parity
+
+- `pytest scripts/tests`: 26/26 pass (adds the fp64 identity test and T1 layer tests).
+- End-to-end harness (`--candidate pxs --tier T1`): **bitwise-identical** on both checkpoints ×
+  both dtypes × all inputs — on H100 the `avg_pool2d` kernel reproduces the unshuffle+mean
+  summation exactly, so the conservatively-declared T1 behaves as T0 in practice.
+- Metric gate: ΔPSNR and ΔLPIPS exactly 0.000 on all real images — PASS.
+
+### Benchmarks (JSONs at commit `0048b55`) and gate verdict
+
+- Encode time (the target): **+1.3% (2.0) / +0.6% (1.0)** at 1024²/b1 — below the 3% bar →
+  **time gate FAILED**.
+- Encode peak memory: **unchanged (+0.0%)** → **memory gate FAILED**. The prediction in
+  [[PXS Simplifications]] §2 did not materialize: the encoder's peak is set by the
+  replicate-pad copies inside the ResNet blocks (~3× the level-0 activation live at once),
+  not by the downsample's unshuffle temporary (~2.3×) — removing the temporary trims traffic,
+  not the peak.
+- No cell regressed in time or memory; the T0 decode win is unchanged at this commit
+  (decode 1024²/b1: 1.02×, −24.5%).
+
+**Status**: kept in the tree as a strictly-non-negative simplification (bitwise-safe, +1–2%
+encode, less allocator traffic, one kernel fewer for [[torch.compile Tuning (2D)]] to fuse),
+but it does **not** independently clear the acceptance gate — recorded here so the log stays
+honest. Lesson for the pipeline: encoder capacity work must target the replicate-pad copies
+([[Padding Modes]]) rather than the sampling blocks.
+
 ### Finding: 2³¹-element kernel limit
 
 The eager model (baseline **and** pxs) hard-fails with

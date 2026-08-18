@@ -57,6 +57,10 @@ pxs_out = F.avg_pool2d(x, 2)
 
 Impact: removes a `(B, 4C, H/2, W/2)` ≡ `(C·HW)`-element temporary per downsample — at encoder
 level 0 that is another `128·HW` tensor, equal to the level-0 activation itself.
+*Measured* ([[Optimization Results]]): encode time +1–2%, encode **peak unchanged** — the
+encoder's peak is set by the replicate-pad copies inside the ResNet blocks (~3× the level-0
+activation live at once), which exceed the downsample-moment working set (~2.3×). Bandwidth
+win only; did not clear the acceptance gate on its own.
 
 ## Notes
 
