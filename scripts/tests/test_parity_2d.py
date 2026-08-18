@@ -24,7 +24,7 @@ import torch
 
 from data.image_dataset import ImageDataset
 from kvae.models import KVAEImage
-from scripts.candidates import CANDIDATES, apply_candidate
+from scripts.candidates import CandidateRunner, parse_candidate
 
 MODEL_PATHS = {
     "KVAE_1.0": "kandinskylab/KVAE-2D-1.0",
@@ -64,10 +64,10 @@ def real_inputs(data_dir):
         yield Path(item["paths"]).name, x[:, top : top + h8, left : left + w8].unsqueeze(0)
 
 
-def run_pass(vae, x):
+def run_pass(runner, x):
     with torch.no_grad():
-        lat = vae.encode(x).latent_dist.mode()
-        rec = vae.decode(lat)
+        lat = runner.encode(x)
+        rec = runner.decode(lat)
     return lat, rec
 
 
@@ -85,15 +85,21 @@ def border_interior_max(diff, px=BORDER_PX):
 def main():
     p = argparse.ArgumentParser(description="KVAE 2D speed-up parity harness")
     p.add_argument("--model", choices=sorted(MODEL_PATHS), default="KVAE_2.0")
-    p.add_argument("--candidate", choices=[c for c in CANDIDATES if c != "baseline"], required=True)
+    p.add_argument("--candidate", required=True,
+                   help="comma-separated composable spec, e.g. 'pxs' or 'pxs,cl,compile'")
     p.add_argument("--tier", choices=["T0", "T1"], required=True)
     p.add_argument("--device", type=int, default=0)
     p.add_argument("--dtypes", default="bf16,fp32")
     p.add_argument("--data-dir", default="./assets/images")
     args = p.parse_args()
 
+    if "baseline" in parse_candidate(args.candidate):
+        raise SystemExit("--candidate must not be 'baseline'")
+
     device = torch.device(f"cuda:{args.device}")
     vae = KVAEImage.from_pretrained(MODEL_PATHS[args.model]).eval().to(device)
+    runner_base = CandidateRunner(vae, "baseline")
+    runner_cand = CandidateRunner(vae, args.candidate)
 
     header = f"{'input':<28}{'dtype':>6}{'bitwise':>9}{'lat max':>11}{'rec max':>11}{'rec MAE':>11}{'border':>11}{'interior':>11}  verdict"
     print(f"parity: {args.model}  candidate={args.candidate}  tier={args.tier}")
@@ -119,10 +125,8 @@ def main():
 
         for name, x, is_real in inputs:
             x = x.to(device=device, dtype=dtype)
-            apply_candidate("baseline")
-            lat_b, rec_b = run_pass(vae, x)
-            apply_candidate(args.candidate)
-            lat_c, rec_c = run_pass(vae, x)
+            lat_b, rec_b = run_pass(runner_base, x)
+            lat_c, rec_c = run_pass(runner_cand, x)
 
             bitwise = torch.equal(lat_b, lat_c) and torch.equal(rec_b, rec_c)
             dlat = (lat_b.float() - lat_c.float()).abs()

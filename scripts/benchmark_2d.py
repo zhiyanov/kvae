@@ -24,7 +24,7 @@ from pathlib import Path
 import torch
 
 from kvae.models import KVAEImage
-from scripts.candidates import CANDIDATES, apply_candidate
+from scripts.candidates import CandidateRunner
 
 MODEL_PATHS = {
     "KVAE_1.0": "kandinskylab/KVAE-2D-1.0",
@@ -95,7 +95,8 @@ def bench_phase(fn, arg, warmup: int, iters: int):
 def main():
     p = argparse.ArgumentParser(description="KVAE 2D benchmark grid runner")
     p.add_argument("--model", choices=sorted(MODEL_PATHS), default="KVAE_2.0")
-    p.add_argument("--candidate", choices=CANDIDATES, required=True)
+    p.add_argument("--candidate", required=True,
+                   help="comma-separated composable spec, e.g. 'baseline' or 'pxs,cl,compile'")
     p.add_argument("--grid", choices=["full", "smoke"], default="full")
     p.add_argument("--include-4k", action="store_true", help="add the 4096x4096 tiling cell")
     p.add_argument("--device", type=int, default=0)
@@ -112,9 +113,9 @@ def main():
 
     device = torch.device(f"cuda:{args.device}")
     torch.manual_seed(111)
-    apply_candidate(args.candidate)
 
     vae = KVAEImage.from_pretrained(MODEL_PATHS[args.model]).eval().to(device)
+    runner = CandidateRunner(vae, args.candidate)
 
     shard_i, shard_n = (int(s) for s in args.shard.split("/"))
     cells = build_cells(args.grid, args.include_4k)[shard_i::shard_n]
@@ -124,12 +125,15 @@ def main():
     for h, w, batch, dtype_name in cells:
         if dtype_name != current_dtype:
             vae.to(DTYPES[dtype_name])
+            runner.activate()  # forwards, memory format, compiled/eager modules
             current_dtype = dtype_name
         label = f"{args.model} {h}x{w} b{batch} {dtype_name}"
         try:
             with torch.no_grad():
-                x = (torch.rand((batch, 3, h, w), generator=g) * 2 - 1).to(
-                    device, DTYPES[dtype_name]
+                x = runner.prep(
+                    (torch.rand((batch, 3, h, w), generator=g) * 2 - 1).to(
+                        device, DTYPES[dtype_name]
+                    )
                 )
                 phases = {}
                 phases["encode"], lat = bench_phase(
@@ -160,13 +164,13 @@ def main():
         torch.cuda.empty_cache()
 
     out_path = Path(args.out) if args.out else Path("outputs/bench") / (
-        f"{args.model}_{args.candidate}_{commit[:7]}_"
+        f"{args.model}_{runner.spec.replace(',', '+')}_{commit[:7]}_"
         f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
         + (f"_shard{shard_i}of{shard_n}" if shard_n > 1 else "") + ".json"
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     meta = {
-        "commit": commit, "dirty": dirty, "candidate": args.candidate,
+        "commit": commit, "dirty": dirty, "candidate": runner.spec,
         "model": args.model, "grid": args.grid, "shard": args.shard,
         "warmup": args.warmup, "iters": args.iters,
         "torch": torch.__version__, "cuda": torch.version.cuda,
