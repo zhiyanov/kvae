@@ -19,7 +19,8 @@ This vault documents the **image (2D) part** of the KVAE repository — the `KVA
    - [[Current Inference Path]] — what `scripts/inference_2d_kvae.py` runs today (eager, unoptimized)
 3. **The analysis** — the deliverable
    - [[Technique Applicability]] — every video-VAE technique, with a verdict for the 2D model
-4. **The techniques** — details per technique, adapted to 2D
+   - [[Speed-Up Testing Specification]] — parity tiers, benchmark protocol, and acceptance gates for every optimization
+1. **The techniques** — details per technique, adapted to 2D
    - [[torch.compile Tuning (2D)]] · [[Channels-Last Memory Format (2D)]] · [[PXS Simplifications]]
    - [[Spatial Tiling (2D)]] · [[Normalization and Exact Tiling]] · [[Padding Modes]]
    - [[Non-Transferable Techniques]] — the temporal family, and what its absence implies
@@ -30,15 +31,12 @@ This vault documents the **image (2D) part** of the KVAE repository — the `KVA
 skeleton of the old video encoder with the entire temporal machinery removed. Its inference path
 today is fully eager: no `torch.compile`, no channels-last layout, batch size 1 by default, and
 every ResNet/sampling conv pays a hidden `F.pad` copy for its `replicate`/`reflect` padding.
-Because images are ~100–1000× smaller workloads than video clips, the *memory-capacity* half of
-the old toolkit ([[Spatial Tiling (2D)]] with halos and tile-count selection) only matters at
-≥4K resolution or large batches; the *memory-bandwidth* half ([[torch.compile Tuning (2D)]],
-[[Channels-Last Memory Format (2D)]], padding placement, norm fusion) transfers directly and is
+Because images are ~100–1000× smaller workloads than video clips, the *memory-capacity* half of the old toolkit ([[Spatial Tiling (2D)]] with halos and tile-count selection) only matters at
+≥4K resolution or large batches; the *memory-bandwidth* half ([[torch.compile Tuning (2D)]], [[Channels-Last Memory Format (2D)]], padding placement, norm fusion) transfers directly and is
 the first-order win. Two techniques remain **model changes** requiring retraining, exactly as in
 the video repo: zero spatial padding and channel-only (RMS) normalization — the latter is the
 precondition for *exact* tiling and is blocked today by [[GroupNorm]] in the encoder and inside
-every `DecoderSpatialNorm2D` in the decoder. Two new, free, numerically-exact simplifications of
-the [[PXS Sampling Blocks]] were verified during this analysis ([[PXS Simplifications]]).
+every `DecoderSpatialNorm2D` in the decoder. Two new, free, numerically-exact simplifications of the [[PXS Sampling Blocks]] were verified during this analysis ([[PXS Simplifications]]).
 
 ## Repository map (image part)
 
