@@ -46,7 +46,8 @@ the metric gate** to validate the actual production path.
 ### Test inputs
 
 - **Synthetic**: fixed-seed random tensors + structured patterns (constant, ramp, checkerboard – edge/padding bugs show up on structured inputs, not noise).
-- **Real**: every image in `assets/image_test` (the shipped eval set).
+- **Real**: every image in `assets/images` (the shipped eval set), center-cropped to the shape
+  contract.
 - **Size grid**: 256², 512², 1024², and non-square 768×1344 (aspect-ratio bugs), batch {1, 4}.
 - **Boundary attention**: parity failures concentrate at image borders ([[Padding Modes]]) and —
   for tiling — at tile seams. The harness reports max-abs-diff **separately for the border
@@ -100,8 +101,7 @@ peak_mem_bytes, n_iters}]}`. Raw JSONs are the source of truth; tables are deriv
 
 ### Deliverables
 
-- `scripts/benchmark_2d.py` — grid runner → JSON (flags: `--candidate`, `--grid full|smoke`,
-  `--gpu-slice i/n`).
+- `scripts/benchmark_2d.py` — grid runner → JSON (flags: `--candidate`, `--grid full|smoke`, `--gpu-slice i/n`).
 - `scripts/compare_bench_2d.py` — takes two JSONs (baseline, candidate), prints a table of
   speedup factors and memory deltas per grid cell, and applies the acceptance gate below.
 

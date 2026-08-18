@@ -34,6 +34,9 @@ dependencies = [
     "pesq",
 ]
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
 [tool.uv]
 # The repo is not an installable package (no build config); scripts run as
 # `python -m scripts.<name>` from the repo root.
