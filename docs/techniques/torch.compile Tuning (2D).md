@@ -5,7 +5,14 @@ aliases: [inductor flags 2D, compile 2D]
 
 # torch.compile Tuning (2D)
 
-**Verdict: applies as-is — the highest-leverage pure code change.** The image model today is
+**Verdict: applies as-is — the highest-leverage pure code change.**
+*Status: ACCEPTED, measured ([[Optimization Results]], round 3): e2e 1.63–1.67× at ≥1024²/b1 on
+both checkpoints, decode 1.80×, encode 1.34×, ~128 s one-time compile, memory ~neutral; lifts
+the 2³¹-element eager-kernel limit. Apply WITHOUT channels-last (see
+[[Channels-Last Memory Format (2D)]]). Classified T2: autotuned kernel selection changes
+numerics beyond T1 thresholds (metric gate passes with ΔPSNR ≤ 0.009 dB).*
+
+The image model today is
 exactly where the video baseline was: an interpreter-driven sequence of eager kernels over
 memory-bound norm→SiLU→conv→residual chains. The video vault measured that leaving this class of
 model uncompiled "leaves 2–3× on the table before any algorithmic change"; the same reasoning

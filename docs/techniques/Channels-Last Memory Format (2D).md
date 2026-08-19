@@ -5,7 +5,14 @@ aliases: [channels_last, NHWC]
 
 # Channels-Last Memory Format (2D)
 
-**Verdict: applies as-is.** The video repo kept everything in `channels_last_3d` (NDHWC); the 2D
+**Verdict: REJECTED — measured 0.43–0.79× in eager mode** ([[Optimization Results]], round 3).
+The original reasoning below assumed conv kernels dominate; in practice the model's
+replicate/reflect pads and GroupNorm lack fast NHWC kernels and eager NHWC is up to 2.3×
+*slower* (peak memory does drop 20–37%). It also hurts under compile (1.28× vs 1.63× without) —
+inductor picks its own layouts internally, so pre-converting is counterproductive. Kept below
+for the record; revisit only if the model ever moves to zero padding + channel-only norms.
+
+**Original analysis** — the video repo kept everything in `channels_last_3d` (NDHWC); the 2D
 equivalent is plain `torch.channels_last` (NHWC), which is *better* supported than the 3D
 variant — cuDNN's fastest bf16 tensor-core conv kernels are NHWC-native.
 

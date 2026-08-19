@@ -83,6 +83,60 @@ but it does **not** independently clear the acceptance gate — recorded here so
 honest. Lesson for the pipeline: encoder capacity work must target the replicate-pad copies
 ([[Padding Modes]]) rather than the sampling blocks.
 
+## Round 3 — torch.compile ACCEPTED, channels-last REJECTED (2026-08-19)
+
+**Change** (commit `6d249f3` + TF32 harness fix `beb9320`): composable candidate specs via
+`scripts/candidates.py::CandidateRunner` — `cl` (channels-last) and `compile`
+(`torch.compile(dynamic=True)` of encoder/decoder with the inductor recipe: `max_autotune`,
+ATEN+TRITON backends, `combo_kernels`, `memory_planning`, `force_same_precision`,
+`cudnn.benchmark`). Benchmark JSONs at `6d249f3`/`beb9320`.
+
+### torch.compile without channels-last (`pxs,compile`) — the winner
+
+| cell (bf16, KVAE-2D-2.0) | baseline | compile | speedup |
+|---|---|---|---|
+| e2e 1024² b1 | 190.7 ms | 116.8 ms | **1.63×** |
+| e2e 2048² b1 | 751.8 ms | 456.6 ms | **1.65×** |
+| decode 1024² b1 | 134.5 ms | 74.9 ms | **1.80×** |
+| encode 1024² b1 | 56.3 ms | 42.2 ms | 1.34× |
+| e2e 1024² b4 | 536.3 ms | 459.5 ms | 1.17× |
+
+KVAE-2D-1.0 matches (1.65–1.67× e2e b1) with peak memory −7…−8%; on 2.0 memory is neutral at
+≥512² and +0.03–0.08 GiB at 256² (autotune workspace floor — the reason the acceptance gate's
+memory rule gained an absolute floor). One-time compile cost ≈ **128 s** (max_autotune); warm
+graphs serve all resolutions via `dynamic=True`. **The decode 1.80× confirms the round-2
+prediction**: the replicate-pad copies were the decoder's dominant bandwidth cost, and inductor
+fuses them. **The 2³¹-element eager limit is lifted**: 1024²/b16 and 768×1344/b16 now run
+(1870 ms e2e) — impossible in the eager baseline.
+
+Parity: metric gate passes with huge margin on both checkpoints (mean ΔPSNR ≤ 0.002 dB, worst
+per-image −0.009 dB, ΔLPIPS ≤ 8.4e-5). fp32 TF32-off equivalence: 2.0 at the reorder-noise
+floor (~1e-5); 1.0 shows decoder-side diffs up to 3.5e-3 (autotune picked different kernels)
+and isolated bf16 per-pixel outliers up to 0.2 on real reconstructions (MAE ~3e-3, PSNR/LPIPS
+unaffected) — recorded as the known cost of autotuned kernel selection. Classified **T2** (see
+the amended tier table in [[Speed-Up Testing Specification]]).
+
+### Channels-last (`pxs,cl`) — rejected
+
+Eager NHWC is **0.43–0.79×** (up to 2.3× *slower*; worse at larger sizes) despite −20…−37%
+peak memory: the replicate/reflect pads and GroupNorm lack fast NHWC kernels, inverting the
+assumption in [[Channels-Last Memory Format (2D)]]. Under compile it still hurts: `pxs,cl,compile`
+reaches only 1.28× at 1024²/b1 (vs 1.63× without cl) and regresses at b4 (0.87×), with +4–12%
+memory. Inductor picks its own layouts internally — pre-converting is counterproductive.
+Parity for the record: metric gates passed; bf16/fp32 numerics behaved as 1–2 ulps at latent
+scale once TF32 was disabled in the fp32 pass.
+
+### Framework findings
+
+- **TF32 poisoned the fp32 parity check** (~1e-2 diffs, all kernel-selection candidates):
+  fp32 tensor-core kernels are default-on and engage differently per kernel. The harness now
+  disables TF32 for fp32 passes (`beb9320`); diffs collapsed to ~1e-5.
+- The T1 absolute thresholds cannot be met by whole-graph kernel-selection changes (bf16 ulps
+  at latent scale |z|≈13 exceed them) — tier table amended: such changes are T2 with the
+  TF32-off fp32 run as supporting evidence.
+- The memory-regression rule gained an absolute floor (0.25 GiB) so fixed autotune workspaces
+  at small cells don't read as regressions.
+
 ### Finding: 2³¹-element kernel limit
 
 The eager model (baseline **and** pxs) hard-fails with

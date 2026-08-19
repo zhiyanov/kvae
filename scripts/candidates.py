@@ -91,19 +91,6 @@ def apply_candidate(name: str) -> None:
         cls.forward = fwd
 
 
-def _configure_inductor() -> None:
-    # The recipe from docs/techniques/torch.compile Tuning (2D).md.
-    import torch._inductor.config as cfg
-
-    cfg.max_autotune = True
-    cfg.max_autotune_gemm_backends = "ATEN,TRITON"
-    cfg.combo_kernels = True
-    cfg.memory_planning = True
-    cfg.force_same_precision = True
-    torch.backends.cudnn.benchmark = True
-    torch._dynamo.config.cache_size_limit = 128
-
-
 class CandidateRunner:
     def __init__(self, vae, spec: str):
         self.vae = vae
@@ -122,7 +109,9 @@ class CandidateRunner:
         self.vae.to(memory_format=self.memory_format)
         if "compile" in self.names:
             if self._compiled is None:
-                _configure_inductor()
+                from scripts.common_utils import configure_inductor
+
+                configure_inductor()
                 self._compiled = (
                     torch.compile(self._orig_encoder, dynamic=True),
                     torch.compile(self._orig_decoder, dynamic=True),

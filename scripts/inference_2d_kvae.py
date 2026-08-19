@@ -13,7 +13,7 @@ from torchmetrics.image import (
 from tqdm import tqdm
 
 from kvae.models import KVAEImage
-from scripts.common_utils import parse_int_tuple, set_seed_and_optimal_cuda_env
+from scripts.common_utils import compile_vae, parse_int_tuple, set_seed_and_optimal_cuda_env
 from data.image_dataset import ImageDataset
 from data.saving_reconstruction_utils import save_tensor_image
 
@@ -128,6 +128,12 @@ if __name__ == "__main__":
         default=None,
         help="Path to folder for saving reconstraction if you need dumping",
     )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="torch.compile the encoder/decoder: ~1.6x faster inference after "
+        "a one-time ~2 min compilation on the first batch",
+    )
 
     cli_args = parser.parse_args()
 
@@ -142,6 +148,8 @@ if __name__ == "__main__":
     }
 
     vae = KVAEImage.from_pretrained(model_paths[cli_args.model]).eval().to(device).to(dtype)
+    if cli_args.compile:
+        vae = compile_vae(vae)
 
     psnr, lpips = run_image_inference(
         vae=vae,
