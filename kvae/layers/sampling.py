@@ -16,7 +16,6 @@ class PXSUpsample(nn.Module):
     def __init__(self, in_channels: int, factor: int = 2):
         super().__init__()
         self.factor = factor
-        self.shuffle = nn.PixelShuffle(self.factor)
         self.spatial_conv = nn.Conv2d(
             in_channels,
             in_channels,
@@ -29,13 +28,13 @@ class PXSUpsample(nn.Module):
         self.linear = nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        repeated = x.repeat_interleave(self.factor**2, dim=1)
-        pxs_interm = self.shuffle(repeated)
-
-        image_like_ups = F.interpolate(x, scale_factor=2, mode="nearest")
+        # PixelShuffle(repeat_interleave(x, factor^2, dim=1)) is bitwise equal to
+        # nearest-neighbor upsampling, so the residual reuses the conv input
+        # instead of materializing a factor^2-channel temporary.
+        image_like_ups = F.interpolate(x, scale_factor=self.factor, mode="nearest")
         conv_out = self.spatial_conv(image_like_ups)
 
-        out = conv_out + pxs_interm
+        out = conv_out + image_like_ups
         return self.linear(out)
 
 
@@ -121,7 +120,6 @@ class PXSDownsample(nn.Module):
     def __init__(self, in_channels: int, factor: int = 2):
         super().__init__()
         self.factor = factor
-        self.unshuffle = nn.PixelUnshuffle(self.factor)
         self.spatial_conv = nn.Conv2d(
             in_channels,
             in_channels,
@@ -134,11 +132,10 @@ class PXSDownsample(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: B x C x H x W
-        pxs_interm = self.unshuffle(x)
-
-        b, c, h, w = pxs_interm.shape
-        pxs_interm_view = pxs_interm.view(b, c // self.factor**2, self.factor**2, h, w)
-        pxs_out = torch.mean(pxs_interm_view, dim=2)
+        # PixelUnshuffle groups each factor x factor block of a channel into
+        # factor^2 consecutive channels, so unshuffle -> view -> mean(dim=2) is
+        # average pooling; computing it directly skips a factor^2-channel temporary.
+        pxs_out = F.avg_pool2d(x, self.factor)
 
         conv_out = self.spatial_conv(x)
 
